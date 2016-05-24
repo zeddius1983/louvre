@@ -2,16 +2,24 @@ package org.avalyugin.louvre
 
 import akka.actor.{Actor, Props}
 
+import scala.util.Try
+
+case class AccountException(msg: String) extends Exception(msg)
+
 case class Account(id: String, balance: Int) {
   def deposit(amount: Int): Account = Account(id, balance + amount)
-  def withdraw(amount: Int): Either[String, Account] =
-    if (amount > balance) Left("The balance can't be negative after withdraw")
-    else Right(Account(id, balance - amount))
+
+  def withdraw(amount: Int): Account =
+    if (amount > balance) throw AccountException(s"The account '${id}' balance can't be negative after withdraw")
+    else Account(id, balance - amount)
 }
 
 trait AccountService {
 
-  private var accounts: Map[String, Account] = Map()
+  private var accounts: Map[String, Account] = Map(
+    "test1" -> Account("test1", 50),
+    "test2" -> Account("test2", 20)
+  )
 
   def openAccount(amount: Int): Account = {
     val uuid = java.util.UUID.randomUUID.toString
@@ -20,20 +28,17 @@ trait AccountService {
     newAccount
   }
 
-  def getAccount(id: String): Either[String, Account] = accounts.get(id) match {
-    case Some(account) => Right(account)
-    case None => Left(s"No account '${id}' found")
+  def getAccount(id: String): Account = accounts.get(id) match {
+    case Some(account) => account
+    case None => throw AccountException(s"No account '${id}' found")
   }
 
-  def transfer(src: Account, dest: Account, amount: Int): Either[String, (Account, Account)] = {
-    val result: Either[String, (Account, Account)] = for {
-      x <- src.withdraw(amount).right
-    } yield (x, dest.deposit(amount))
-    result match {
-      case Right((x, y)) => List(x, y).foreach(accounts += _)
-      case _ =>
-    }
-    result
+  def transfer(src: Account, dest: Account, amount: Int): (Account, Account) = {
+    val newSrc = src.withdraw(amount)
+    val newDest = dest.deposit(amount)
+    accounts += newSrc
+    accounts += newDest
+    (newSrc, newDest)
   }
 
 }
@@ -42,11 +47,23 @@ class AccountServiceActor extends Actor with AccountService {
 
   import AccountServiceActor._
 
-  override def receive: Receive = {
+  override def receive: Receive = handleExceptions {
     case OpenAccount(amount) => sender() ! openAccount(amount)
     case GetAccount(id) => sender() ! getAccount(id)
-    case Transfer(src, dest, amount) => sender() ! transfer(src, dest, amount)
+    case Transfer(src, dest, amount) => Try(transfer(src, dest, amount)) // ignore
   }
+
+  def handleExceptions(f: Receive): Receive = {
+    case msg =>
+      try {
+        f.apply(msg)
+      } catch {
+        case e: Exception =>
+          sender() ! akka.actor.Status.Failure(e)
+          throw e
+      }
+  }
+
 
 }
 

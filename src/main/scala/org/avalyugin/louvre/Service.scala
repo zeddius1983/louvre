@@ -16,6 +16,7 @@ import spray.json.DefaultJsonProtocol._
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration._
 import scala.io.StdIn
+import scala.util.{Failure, Success}
 
 trait AccountServiceRoute {
 
@@ -36,30 +37,41 @@ trait AccountServiceRoute {
 
   val getAccountHandler = get {
     path("accounts" / Segment) { id =>
-      val account = (accountService ? GetAccount(id)).mapTo[Either[String, Account]]
-      onSuccess(account) {
-        case Left(msg) => complete((StatusCodes.NotFound, msg))
-        case Right(acc) => complete(acc)
+      val account = (accountService ? GetAccount(id)).mapTo[Account]
+      onComplete(account) {
+        case Success(acc) => complete(acc)
+        case Failure(error) => complete((StatusCodes.NotFound, error.getMessage))
       }
     }
   }
 
   val openAccountHandler = post {
-    parameter("amount".as[Int]) { amount =>
-      path("accounts" / "open") {
+    path("accounts" / "open") {
+      parameter("amount".as[Int]) { amount =>
         val account = (accountService ? OpenAccount(amount)).mapTo[Account]
-        complete((StatusCodes.Created, account))
+        onComplete(account) {
+          case Success(acc) => complete((StatusCodes.Created, acc))
+          case Failure(error) => complete((StatusCodes.NotAcceptable, error.getMessage))
+        }
       }
     }
   }
 
   val transferHandler = post {
-    parameter("dest", "amount".as[Int]) { (destId, amount) =>
-      path("accounts" / Segment / "transfers" / "new") { sourceId =>
-        val srcAcc = (accountService ? GetAccount(sourceId)).mapTo[Either[String, Account]]
-        val destAcc = (accountService ? GetAccount(destId)).mapTo[Either[String, Account]]
-        // TODO: it's too late...
-        complete((StatusCodes.Accepted, s"Requested transfer of ${amount} from '${sourceId}' to '${destId}'"))
+    path("accounts" / Segment / "transfers" / Segment / "new") { (sourceId, destId) =>
+      parameter("amount".as[Int]) { amount =>
+        val srcRequested = (accountService ? GetAccount(sourceId))
+        val destRequested = (accountService ? GetAccount(destId))
+        val transfer = for {
+          x <- srcRequested.mapTo[Account]
+          y <- destRequested.mapTo[Account]
+        } yield Transfer(x, y, amount)
+        onComplete(transfer) {
+          case Success(msg) =>
+            accountService ! msg
+            complete((StatusCodes.Accepted, s"Requested transfer of ${amount} from '${sourceId}' to '${destId}'"))
+          case Failure(error) => complete((StatusCodes.NotFound, error.getMessage))
+        }
       }
     }
   }
