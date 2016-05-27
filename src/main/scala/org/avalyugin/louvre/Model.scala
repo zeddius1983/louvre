@@ -2,24 +2,18 @@ package org.avalyugin.louvre
 
 import akka.actor.{Actor, Props}
 
-import scala.util.Try
-
 case class AccountException(msg: String) extends Exception(msg)
 
 case class Account(id: String, balance: Int) {
   def deposit(amount: Int): Account = Account(id, balance + amount)
-
   def withdraw(amount: Int): Account =
-    if (amount > balance) throw AccountException(s"The account '${id}' balance can't be negative after withdraw")
+    if (amount > balance) throw AccountException(s"The account '$id' balance can't be negative after withdraw")
     else Account(id, balance - amount)
 }
 
 trait AccountService {
 
-  private var accounts: Map[String, Account] = Map(
-    "test1" -> Account("test1", 50),
-    "test2" -> Account("test2", 20)
-  )
+  var accounts: Map[String, Account]
 
   def openAccount(amount: Int): Account = {
     val uuid = java.util.UUID.randomUUID.toString
@@ -30,7 +24,7 @@ trait AccountService {
 
   def getAccount(id: String): Account = accounts.get(id) match {
     case Some(account) => account
-    case None => throw AccountException(s"No account '${id}' found")
+    case None => throw AccountException(s"No account '$id' found")
   }
 
   def transfer(src: Account, dest: Account, amount: Int): (Account, Account) = {
@@ -43,18 +37,23 @@ trait AccountService {
 
 }
 
-class AccountServiceActor extends Actor with AccountService {
+class AccountServiceActor(override var accounts: Map[String, Account] = Map()) extends Actor with AccountService {
 
   import AccountServiceActor._
 
-  override def receive: Receive = handleExceptions {
+  override def receive: Receive = handleExceptions2 {
     case OpenAccount(amount) => sender() ! openAccount(amount)
     case GetAccount(id) => sender() ! getAccount(id)
-    case Transfer(src, dest, amount) => Try(transfer(src, dest, amount)) // ignore
+  } orElse {
+    // Do not handle exceptions for transfer because we're not sending response back to sender
+    case Transfer(src, dest, amount) => transfer(src, dest, amount)
   }
 
+  /**
+    * Wraps the partial function to handle exceptions and send back Failure status.
+    */
   def handleExceptions(f: Receive): Receive = {
-    case msg =>
+    case msg if f.isDefinedAt(msg) =>
       try {
         f.apply(msg)
       } catch {
@@ -64,6 +63,18 @@ class AccountServiceActor extends Actor with AccountService {
       }
   }
 
+  // TODO: which of two is better???
+  def handleExceptions2(f: Receive): Receive = new Receive {
+    override def isDefinedAt(msg: Any): Boolean = f.isDefinedAt(msg)
+    override def apply(msg: Any): Unit =
+      try {
+        f.apply(msg)
+      } catch {
+        case e: Exception =>
+          sender() ! akka.actor.Status.Failure(e)
+          throw e
+      }
+  }
 
 }
 
@@ -71,6 +82,10 @@ object Account {
 
   def apply(id: String): Account = new Account(id, 0)
 
+  import scala.language.implicitConversions
+  /**
+    * Implicitely converts Account to map entry.
+    */
   implicit def accountToMap(account: Account): (String, Account) = (account.id, account)
 
 }
@@ -84,4 +99,6 @@ object AccountServiceActor {
   case class Transfer(src: Account, dest: Account, amount: Int)
 
   def props(): Props = Props(new AccountServiceActor())
+
+  def props(accounts: Map[String, Account]): Props = Props(new AccountServiceActor(accounts))
 }
