@@ -34,6 +34,7 @@ trait AccountService {
   }
 
   def transfer(src: Account, dest: Account, amount: Int): (Account, Account) = {
+    if (src.id == dest.id) throw AccountException(s"Can't transfer between the same account [${src.id}]")
     val newSrc = src.withdraw(amount)
     val newDest = dest.deposit(amount)
     accounts += newSrc
