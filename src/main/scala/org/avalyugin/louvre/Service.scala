@@ -4,14 +4,11 @@ import akka.actor.{ActorRef, ActorSystem}
 import akka.event.{Logging, LoggingAdapter}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
-import akka.http.scaladsl.marshalling.{ToEntityMarshaller, ToResponseMarshallable}
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.unmarshalling.FromResponseUnmarshaller
 import akka.pattern.ask
 import akka.stream.{ActorMaterializer, Materializer}
 import akka.util.Timeout
-import com.typesafe.config.{Config, ConfigFactory}
 import org.avalyugin.louvre.AccountServiceActor.{GetAccount, OpenAccount, Transfer}
 import spray.json.DefaultJsonProtocol
 
@@ -29,7 +26,6 @@ trait AccountServiceRoute extends JsonProtocol {
   implicit def executor: ExecutionContextExecutor
   implicit val materializer: Materializer
 
-//  def config: Config
   val logger: LoggingAdapter
 
   val accountService: ActorRef
@@ -48,11 +44,11 @@ trait AccountServiceRoute extends JsonProtocol {
 
   val openAccountHandler = post {
     path("accounts" / "open") {
-      parameter("amount".as[Int]) { amount =>
+      parameter("amount".as[Int].?) { amount =>
         val account = (accountService ? OpenAccount(amount)).mapTo[Account]
         onComplete(account) {
           case Success(acc) => complete((StatusCodes.Created, acc))
-          case Failure(error) => complete((StatusCodes.NotAcceptable, error.getMessage))
+          case Failure(error) => complete((StatusCodes.BadRequest, error.getMessage))
         }
       }
     }
@@ -86,10 +82,9 @@ object Server extends App with AccountServiceRoute {
   override implicit val executor = system.dispatcher
   override implicit val materializer = ActorMaterializer()
 
-  val demoAccounts = Map(Account("test1", 40), Account("test2", 60))
-//  override val config = ConfigFactory.load()
   override val logger = Logging(system, getClass)
-  override val accountService = system.actorOf(AccountServiceActor.props(demoAccounts), "AccountServiceActor")
+  override val accountService = system.actorOf(AccountServiceActor.props(
+    Map(Account("odersky", 40), Account("miller", 60))), "AccountServiceActor")
 
   val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 

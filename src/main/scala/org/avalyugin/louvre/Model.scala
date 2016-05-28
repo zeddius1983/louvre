@@ -7,24 +7,30 @@ case class AccountException(msg: String) extends Exception(msg)
 case class Account(id: String, balance: Int) {
   def deposit(amount: Int): Account = Account(id, balance + amount)
   def withdraw(amount: Int): Account =
-    if (amount > balance) throw AccountException(s"The account '$id' balance can't be negative after withdraw")
+    if (amount > balance) throw AccountException(s"The account [$id] balance can't be negative after withdrawal")
     else Account(id, balance - amount)
 }
 
 trait AccountService {
 
+  final val MaxBalance: Int = 1000
+
+  final val OpenAccountBalance: Int = 0
+
   var accounts: Map[String, Account]
 
-  def openAccount(amount: Int): Account = {
+  def openAccount(amount: Option[Int]): Account = {
+    val initialBalance = amount.getOrElse(OpenAccountBalance)
+    if (initialBalance > MaxBalance) throw AccountException(s"Can't open accounts with initial balance > ${MaxBalance}")
     val uuid = java.util.UUID.randomUUID.toString
-    val newAccount = Account(uuid, amount)
+    val newAccount = Account(uuid, initialBalance)
     accounts += newAccount
     newAccount
   }
 
   def getAccount(id: String): Account = accounts.get(id) match {
     case Some(account) => account
-    case None => throw AccountException(s"No account '$id' found")
+    case None => throw AccountException(s"No account [$id] found")
   }
 
   def transfer(src: Account, dest: Account, amount: Int): (Account, Account) = {
@@ -41,7 +47,7 @@ class AccountServiceActor(override var accounts: Map[String, Account] = Map()) e
 
   import AccountServiceActor._
 
-  override def receive: Receive = handleExceptions2 {
+  override def receive: Receive = handleExceptions {
     case OpenAccount(amount) => sender() ! openAccount(amount)
     case GetAccount(id) => sender() ! getAccount(id)
   } orElse {
@@ -64,7 +70,7 @@ class AccountServiceActor(override var accounts: Map[String, Account] = Map()) e
   }
 
   // TODO: which of two is better???
-  def handleExceptions2(f: Receive): Receive = new Receive {
+  /** def handleExceptions2(f: Receive): Receive = new Receive {
     override def isDefinedAt(msg: Any): Boolean = f.isDefinedAt(msg)
     override def apply(msg: Any): Unit =
       try {
@@ -74,7 +80,7 @@ class AccountServiceActor(override var accounts: Map[String, Account] = Map()) e
           sender() ! akka.actor.Status.Failure(e)
           throw e
       }
-  }
+  }**/
 
 }
 
@@ -94,7 +100,7 @@ object AccountServiceActor {
 
   case class GetAccount(id: String)
 
-  case class OpenAccount(amount: Int)
+  case class OpenAccount(amount: Option[Int])
 
   case class Transfer(src: Account, dest: Account, amount: Int)
 
