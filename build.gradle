@@ -2,6 +2,9 @@ group 'org.avalyugin'
 version '1.0-SNAPSHOT'
 
 apply plugin: 'scala'
+apply plugin: 'application'
+
+mainClassName = 'org.avalyugin.louvre.Server'
 
 repositories {
     mavenCentral()
