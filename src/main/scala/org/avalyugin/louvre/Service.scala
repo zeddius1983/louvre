@@ -12,13 +12,24 @@ import akka.util.Timeout
 import org.avalyugin.louvre.AccountServiceActor.{GetAccount, OpenAccount, Transfer}
 import spray.json.DefaultJsonProtocol
 
-import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration._
-import scala.io.StdIn
+import scala.concurrent.{ExecutionContextExecutor, Promise}
 import scala.util.{Failure, Success}
 
 trait JsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
   implicit val accountFormat = jsonFormat2(Account.apply)
+}
+
+trait ShutdownServiceRoute {
+  val shutdownPromise = Promise[Boolean]()
+
+  val shutdownRoute = post {
+    path("admin" / "shutdown") {
+      shutdownPromise.success(true)
+      complete("Shutdown requested...")
+    }
+  }
+
 }
 
 trait AccountServiceRoute extends JsonProtocol {
@@ -27,7 +38,6 @@ trait AccountServiceRoute extends JsonProtocol {
   implicit val materializer: Materializer
 
   val logger: LoggingAdapter
-
   val accountService: ActorRef
 
   implicit val timeout: Timeout = 5.seconds
@@ -73,11 +83,11 @@ trait AccountServiceRoute extends JsonProtocol {
     }
   }
 
-  val route = getAccountHandler ~ openAccountHandler ~ transferHandler
+  val accountRoute = getAccountHandler ~ openAccountHandler ~ transferHandler
 
 }
 
-object Server extends App with AccountServiceRoute {
+object Server extends App with AccountServiceRoute with ShutdownServiceRoute {
   override implicit val system = ActorSystem()
   override implicit val executor = system.dispatcher
   override implicit val materializer = ActorMaterializer()
@@ -86,13 +96,14 @@ object Server extends App with AccountServiceRoute {
   override val accountService = system.actorOf(AccountServiceActor.props(
     Map(Account("odersky", 40), Account("miller", 60))), "AccountServiceActor")
 
-  val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
+  val bindingFuture = Http().bindAndHandle(accountRoute ~ shutdownRoute, "localhost", 8080)
+  println(s"Server online at http://localhost:8080/" +
+    s"\nSend POST to http://localhost:8080/admin/shutdown to stop the server...")
 
-  println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
-  StdIn.readLine() // let it run until user presses return
-  bindingFuture
-    .flatMap(_.unbind()) // trigger unbinding from the port
-    .onComplete(_ ⇒ system.terminate()) // and shutdown when done
+  shutdownPromise.future
+    .flatMap(_ => bindingFuture)
+    .flatMap(_.unbind())
+    .onComplete(_ ⇒ system.terminate())
 }
 
 

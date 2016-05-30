@@ -12,6 +12,8 @@ class ServiceTest extends WordSpec with Matchers with ScalatestRouteTest with Ac
   override val logger = Logging(system, getClass)
   override val accountService = system.actorOf(AccountServiceActor.props(testAccounts), "AccountServiceActor")
 
+  val route = accountRoute
+
   "The service" should {
     "return an Account for GET requests to the path" in {
       Get("/accounts/odersky") ~> route ~> check {
